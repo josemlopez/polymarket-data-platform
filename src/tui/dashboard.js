@@ -147,8 +147,10 @@ export class Dashboard {
       columnSpacing: 2,
       columnWidth: [16, 10, 14, 16],
       interactive: true,
+      scrollable: true,
       keys: true,
       mouse: true,
+      vi: true,
       style: {
         header: { fg: "cyan", bold: true },
         cell: { fg: "white", selected: { bg: "blue" } },
@@ -161,21 +163,29 @@ export class Dashboard {
       columnSpacing: 2,
       columnWidth: [10, 12, 10, 10, 10, 10],
       interactive: true,
+      scrollable: true,
       keys: true,
       mouse: true,
+      vi: true,
       style: {
         header: { fg: "cyan", bold: true },
         cell: { fg: "white", selected: { bg: "blue" } },
       },
     });
 
-    // Market stats table - by category
+    // Market stats table - by category (interactive)
     this.marketStatsTable = this.grid.set(6, 0, 6, 6, contrib.table, {
-      label: " Stats by Category [Cat | Mkt/Active | Eval | Trade | Skip%] ",
+      label: " Stats by Category [Enter for details] ",
       columnSpacing: 1,
       columnWidth: [9, 10, 8, 8, 8],
+      interactive: true,
+      scrollable: true,
+      keys: true,
+      mouse: true,
+      vi: true,
       style: {
         header: { fg: "cyan", bold: true },
+        cell: { fg: "white", selected: { bg: "blue" } },
       },
     });
 
@@ -184,6 +194,10 @@ export class Dashboard {
       label: " Best Opportunities (by max edge) ",
       columnSpacing: 1,
       columnWidth: [10, 6, 6, 8, 8],
+      scrollable: true,
+      keys: true,
+      mouse: true,
+      vi: true,
       style: {
         header: { fg: "cyan", bold: true },
         cell: { fg: "white" },
@@ -221,12 +235,19 @@ export class Dashboard {
       this.showTradeDetails(index);
     });
 
+    // Stats table events
+    this.marketStatsTable.rows.on("select", (item, index) => {
+      this.showCategoryDetails(index);
+    });
+
     this.focusIndex = 0;
     this.focusElements = [
       this.collectorsTable,
       this.tradesTable,
+      this.marketStatsTable,
       this.edgeChart,
     ];
+    this.categoryData = [];
 
     this.db = null;
     this.logsView = new LogsView({
@@ -258,6 +279,17 @@ export class Dashboard {
     this.focusIndex = 2;
     this.edgeChart.focus();
     this.screen.render();
+  }
+
+  getTableRowLimit(gridRows, { min = 3, max = 200 } = {}) {
+    const screenHeight = this.screen.height || this.screen.rows || 24;
+    const gridRowHeight = Math.max(1, Math.floor(screenHeight / 12));
+    const gridHeight = gridRows * gridRowHeight;
+    const headerLines = 3;
+    const rowHeight = gridHeight >= 12 ? 2 : 3;
+    const usable = Math.max(1, gridHeight - headerLines);
+    const rows = Math.floor(usable / rowHeight);
+    return Math.max(min, Math.min(max, rows));
   }
 
   setDashboardVisible(visible) {
@@ -429,6 +461,118 @@ export class Dashboard {
     this.screen.render();
   }
 
+  showCategoryDetails(index) {
+    if (index < 0 || index >= this.categoryData.length) return;
+
+    const cat = this.categoryData[index];
+    if (!cat || cat.category === "TOTAL" || cat.category === "Last") return;
+
+    if (this.detailPopup) {
+      this.detailPopup.destroy();
+      this.detailPopup = null;
+    }
+
+    // Get detailed stats for this category from DB
+    let extraStats = {};
+    try {
+      if (this.db) {
+        const markets = this.db
+          .prepare(
+            `
+          SELECT COUNT(*) as total,
+                 SUM(CASE WHEN end_time > ? THEN 1 ELSE 0 END) as active,
+                 SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END) as resolved
+          FROM tracked_markets WHERE category = ?
+        `,
+          )
+          .get(Date.now(), cat.category);
+
+        const trades = this.db
+          .prepare(
+            `
+          SELECT COUNT(*) as total,
+                 SUM(CASE WHEN pt.outcome = 'win' THEN 1 ELSE 0 END) as wins,
+                 SUM(CASE WHEN pt.outcome = 'loss' THEN 1 ELSE 0 END) as losses,
+                 SUM(CASE WHEN pt.outcome IS NULL THEN 1 ELSE 0 END) as pending,
+                 AVG(pt.model_edge) as avg_edge,
+                 SUM(pt.pnl) as total_pnl
+          FROM paper_trades pt
+          JOIN tracked_markets tm ON pt.market_id = tm.id
+          WHERE tm.category = ?
+        `,
+          )
+          .get(cat.category);
+
+        const evals = this.db
+          .prepare(
+            `
+          SELECT COUNT(*) as total,
+                 SUM(CASE WHEN decision = 'TRADE' THEN 1 ELSE 0 END) as traded,
+                 SUM(CASE WHEN decision = 'SKIP' THEN 1 ELSE 0 END) as skipped
+          FROM trade_evaluations te
+          JOIN tracked_markets tm ON te.market_id = tm.id
+          WHERE tm.category = ?
+        `,
+          )
+          .get(cat.category);
+
+        extraStats = { markets, trades, evals };
+      }
+    } catch (error) {
+      extraStats = {};
+    }
+
+    let content = `{bold}Category: ${cat.category.toUpperCase()}{/bold}\n\n`;
+    content += `{bold}Markets:{/bold}\n`;
+    content += `  Total: ${extraStats.markets?.total || cat.total}\n`;
+    content += `  Active: ${extraStats.markets?.active || cat.active}\n`;
+    content += `  Resolved: ${extraStats.markets?.resolved || "—"}\n`;
+    content += `\n{bold}Evaluations:{/bold}\n`;
+    content += `  Total: ${extraStats.evals?.total || cat.evaluated}\n`;
+    content += `  Traded: ${extraStats.evals?.traded || cat.traded}\n`;
+    content += `  Skipped: ${extraStats.evals?.skipped || cat.skipped}\n`;
+    content += `\n{bold}Trades:{/bold}\n`;
+    content += `  Total: ${extraStats.trades?.total || "—"}\n`;
+    content += `  Wins: ${extraStats.trades?.wins || 0}\n`;
+    content += `  Losses: ${extraStats.trades?.losses || 0}\n`;
+    content += `  Pending: ${extraStats.trades?.pending || 0}\n`;
+    content += `  Avg Edge: ${extraStats.trades?.avg_edge ? (extraStats.trades.avg_edge * 100).toFixed(1) + "%" : "—"}\n`;
+    content += `  Total PnL: $${extraStats.trades?.total_pnl?.toFixed(2) || "0.00"}\n`;
+
+    this.detailPopup = blessed.box({
+      parent: this.screen,
+      top: "center",
+      left: "center",
+      width: "60%",
+      height: "60%",
+      label: ` ${cat.category} Details [Esc/q to close] `,
+      content: content,
+      tags: true,
+      border: { type: "line" },
+      scrollable: true,
+      keys: true,
+      vi: true,
+      mouse: true,
+      style: {
+        fg: "white",
+        bg: "black",
+        border: { fg: "cyan" },
+      },
+    });
+
+    const closePopup = () => {
+      if (this.detailPopup) {
+        this.detailPopup.destroy();
+        this.detailPopup = null;
+        this.screen.render();
+      }
+    };
+
+    this.detailPopup.key(["escape", "q"], closePopup);
+    this.detailPopup.focus();
+    this.screen.render();
+  }
+
   start() {
     try {
       this.db = new BetterSqlite3(this.dbPath, { readonly: false });
@@ -442,6 +586,9 @@ export class Dashboard {
   }
 
   refresh() {
+    const tradeLimit = this.getTableRowLimit(6, { min: 4, max: 200 });
+    const evalLimit = this.getTableRowLimit(2, { min: 2, max: 50 });
+
     this.collectorData = getCollectorData(this.db);
     const collectorRows = this.collectorData.map((collector) => [
       collector.name,
@@ -454,7 +601,7 @@ export class Dashboard {
       data: safeTableRows(collectorRows, 4),
     });
 
-    this.tradeData = getRecentTrades(this.db, 10);
+    this.tradeData = getRecentTrades(this.db, tradeLimit);
     const tradeRows = this.tradeData.map((trade) => [
       trade.time,
       trade.model,
@@ -473,6 +620,9 @@ export class Dashboard {
     const statsRows = [];
 
     if (detailedStats) {
+      // Store for popup details
+      this.categoryData = detailedStats.byCategory;
+
       // Category breakdown
       detailedStats.byCategory.forEach((cat) => {
         const skipPct =
@@ -515,7 +665,7 @@ export class Dashboard {
     });
 
     // Best opportunities by market
-    const evalsByMarket = getEvaluationsByMarket(this.db, 8);
+    const evalsByMarket = getEvaluationsByMarket(this.db, evalLimit);
     const evalRows = evalsByMarket.map((m) => [
       m.asset,
       `${m.evals}`,
