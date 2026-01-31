@@ -190,13 +190,12 @@ export class Dashboard {
       },
     });
 
-    // Scrollable log box
+    // Edge chart (legend disabled - was covering data)
     this.edgeChart = this.grid.set(8, 6, 4, 6, contrib.line, {
-      label: " Edge Over Time [l: logs] ",
+      label: " Edge: green=TRADE red=SKIP gray=threshold [l: logs] ",
       minY: EDGE_MIN,
       maxY: EDGE_MAX,
-      showLegend: true,
-      legend: { width: 12 },
+      showLegend: false,
       style: {
         text: "white",
         baseline: "black",
