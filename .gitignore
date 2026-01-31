@@ -12,6 +12,10 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 
+# Service runtime files
+data/pids/
+data/logs/
+
 # Logs
 logs/
 *.log
