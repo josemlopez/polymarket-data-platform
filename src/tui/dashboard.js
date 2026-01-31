@@ -7,7 +7,10 @@ import { getCollectorData } from "./views/collectors.js";
 import { getRecentTrades } from "./views/trades.js";
 import { getMarketStats, getDetailedMarketStats } from "./views/markets.js";
 import { getServiceHealth } from "./views/services.js";
-import { getEvaluationStats } from "./views/evaluations.js";
+import {
+  getEvaluationStats,
+  getEvaluationsByMarket,
+} from "./views/evaluations.js";
 import { LogsView, getCollectorLogs } from "./views/logs-view.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -176,14 +179,15 @@ export class Dashboard {
       },
     });
 
-    // Evaluation stats box
-    this.evaluationStatsBox = this.grid.set(6, 6, 2, 6, blessed.box, {
-      label: " Trade Evaluations (last hour) ",
+    // Evaluation stats table - by market
+    this.evaluationStatsTable = this.grid.set(6, 6, 2, 6, contrib.table, {
+      label: " Best Opportunities (by max edge) ",
+      columnSpacing: 1,
+      columnWidth: [10, 6, 6, 8, 8],
       style: {
-        fg: "white",
-        border: { fg: "white" },
+        header: { fg: "cyan", bold: true },
+        cell: { fg: "white" },
       },
-      tags: false,
     });
 
     // Scrollable log box
@@ -511,19 +515,19 @@ export class Dashboard {
       data: safeTableRows(statsRows, 5),
     });
 
-    if (evaluationStats) {
-      const reasons = evaluationStats.skipReasons
-        .map((entry) => `${entry.reason}: ${entry.count}`)
-        .join(", ");
-      const reasonText = reasons ? ` (${reasons})` : "";
-      const summary = `Evaluated: ${evaluationStats.totalEvaluated} | Traded: ${evaluationStats.totalTraded} | Skipped: ${evaluationStats.totalSkipped}${reasonText}`;
-      const lastTime = evaluationStats.lastEvaluationTime
-        ? formatTimestamp(evaluationStats.lastEvaluationTime)
-        : "—";
-      this.evaluationStatsBox.setContent(`${summary}\nLast eval: ${lastTime}`);
-    } else {
-      this.evaluationStatsBox.setContent("No data");
-    }
+    // Best opportunities by market
+    const evalsByMarket = getEvaluationsByMarket(this.db, 8);
+    const evalRows = evalsByMarket.map((m) => [
+      m.asset,
+      `${m.evals}`,
+      `${m.trades}`,
+      m.maxEdge,
+      m.direction,
+    ]);
+    this.evaluationStatsTable.setData({
+      headers: ["Asset", "Evals", "Trd", "MaxEdge", "Dir"],
+      data: safeTableRows(evalRows, 5),
+    });
 
     const edgeSeries = getEdgeSeries(this.db, 50);
     if (!edgeSeries.hasData) {
