@@ -1,0 +1,47 @@
+{
+  "name": "polymarket-data-platform",
+  "version": "1.0.0",
+  "description": "24/7 data collection, strategy evaluation, and paper trading for Polymarket prediction markets",
+  "type": "module",
+  "main": "src/cli/index.js",
+  "bin": {
+    "polymarket": "src/cli/index.js"
+  },
+  "scripts": {
+    "setup": "node scripts/setup-db.js",
+    "collect": "node src/cli/index.js collect",
+    "collect:polymarket": "node src/collectors/polymarket.service.js",
+    "collect:binance": "node src/collectors/binance.service.js",
+    "collect:yahoo": "node src/collectors/yahoo.service.js",
+    "collect:weather": "node src/collectors/openweather.service.js",
+    "paper": "node src/cli/index.js paper",
+    "dashboard": "node src/cli/index.js dashboard",
+    "analyze:efficiency": "node scripts/analyze-efficiency.js",
+    "test": "node --test tests/**/*.test.js",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "polymarket",
+    "prediction-markets",
+    "trading",
+    "paper-trading",
+    "data-collection",
+    "crypto",
+    "finance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "commander": "^12.0.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
