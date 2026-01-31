@@ -5,7 +5,7 @@ import contrib from "blessed-contrib";
 import BetterSqlite3 from "better-sqlite3";
 import { getCollectorData } from "./views/collectors.js";
 import { getRecentTrades } from "./views/trades.js";
-import { getMarketStats } from "./views/markets.js";
+import { getMarketStats, getDetailedMarketStats } from "./views/markets.js";
 import { getServiceHealth } from "./views/services.js";
 import { getEvaluationStats } from "./views/evaluations.js";
 import { LogsView, getCollectorLogs } from "./views/logs-view.js";
@@ -166,11 +166,11 @@ export class Dashboard {
       },
     });
 
-    // Market stats table
+    // Market stats table - by category
     this.marketStatsTable = this.grid.set(6, 0, 6, 6, contrib.table, {
-      label: " Market Stats ",
-      columnSpacing: 2,
-      columnWidth: [20, 28],
+      label: " Stats by Category [Cat | Mkt/Active | Eval | Trade | Skip%] ",
+      columnSpacing: 1,
+      columnWidth: [9, 10, 8, 8, 8],
       style: {
         header: { fg: "cyan", bold: true },
       },
@@ -465,43 +465,50 @@ export class Dashboard {
       data: safeTableRows(tradeRows, 6),
     });
 
-    const marketStats = getMarketStats(this.db);
-    const serviceHealth = getServiceHealth(this.db);
+    const detailedStats = getDetailedMarketStats(this.db);
     const evaluationStats = getEvaluationStats(this.db);
     const statsRows = [];
 
-    if (marketStats) {
-      statsRows.push(["Total markets", String(marketStats.totalMarkets)]);
-      statsRows.push(["Resolved markets", String(marketStats.resolvedMarkets)]);
-      statsRows.push([
-        "Calibration error",
-        marketStats.calibrationError ?? "—",
-      ]);
-
-      if (marketStats.winRateByCategory.length > 0) {
-        marketStats.winRateByCategory.forEach((entry) => {
-          const rate = entry.winRate ? `${entry.winRate}%` : "—";
-          statsRows.push([`Win ${entry.category}`, `${rate} (${entry.total})`]);
-        });
-      } else {
-        statsRows.push(["Win rate", "No data"]);
-      }
-    }
-
-    if (serviceHealth.length > 0) {
-      serviceHealth.forEach((service) => {
+    if (detailedStats) {
+      // Category breakdown
+      detailedStats.byCategory.forEach((cat) => {
+        const skipPct =
+          cat.evaluated > 0
+            ? Math.round((cat.skipped / cat.evaluated) * 100)
+            : 0;
         statsRows.push([
-          `Svc ${service.name}`,
-          `${service.status} ${service.uptime} err:${service.errors}`,
+          cat.category.substring(0, 8),
+          `${cat.total}/${cat.active}`,
+          `${cat.evaluated}`,
+          `${cat.traded}`,
+          `${skipPct}%`,
         ]);
       });
-    } else {
-      statsRows.push(["Services", "No data"]);
+
+      // Totals row
+      const t = detailedStats.totals;
+      statsRows.push([
+        "TOTAL",
+        `${t.markets}/${t.activeMarkets}`,
+        `${t.evaluations}`,
+        `${t.trades}`,
+        t.winRate ? `${t.winRate}%` : "—",
+      ]);
+
+      // Recent activity
+      const ra = detailedStats.recentActivity;
+      statsRows.push([
+        "Last",
+        `snap:${ra.lastSnapshot}`,
+        `eval:${ra.lastEvaluation}`,
+        `trade:${ra.lastTrade}`,
+        "",
+      ]);
     }
 
     this.marketStatsTable.setData({
-      headers: ["Metric", "Value"],
-      data: safeTableRows(statsRows, 2),
+      headers: ["Cat", "Mkt/Act", "Eval", "Trade", "Skip%"],
+      data: safeTableRows(statsRows, 5),
     });
 
     if (evaluationStats) {
