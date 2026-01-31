@@ -192,6 +192,7 @@ export class Dashboard {
       minY: EDGE_MIN,
       maxY: EDGE_MAX,
       showLegend: true,
+      legend: { width: 12 },
       style: {
         text: "white",
         baseline: "black",
