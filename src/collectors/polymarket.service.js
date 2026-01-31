@@ -175,7 +175,7 @@ export class PolymarketCollector extends ServiceBase {
       for (const seriesId of this.seriesMap.keys()) {
         if (this.stopping) break;
         await this.rateLimiter.acquire();
-        const url = `https://gamma-api.polymarket.com/events?series_id=${seriesId}&active=true`;
+        const url = `https://gamma-api.polymarket.com/events?series_id=${seriesId}&order=endDate&ascending=false&limit=20`;
 
         let response;
         try {

@@ -48,6 +48,7 @@ export class PaperTraderService extends ServiceBase {
     this.selectCandlesStmt = null;
     this.selectMarketTradeStmt = null;
     this.selectResolvedPendingTradesStmt = null;
+    this.insertTradeEvaluationStmt = null;
   }
 
   async run() {
@@ -115,6 +116,39 @@ export class PaperTraderService extends ServiceBase {
       WHERE pt.outcome IS NULL
         AND tm.outcome IS NOT NULL
     `);
+
+    try {
+      this.insertTradeEvaluationStmt = this.db.db.prepare(`
+        INSERT INTO trade_evaluations (
+          timestamp,
+          market_id,
+          market_slug,
+          model_name,
+          direction,
+          model_confidence,
+          market_price,
+          edge,
+          decision,
+          reason
+        ) VALUES (
+          @timestamp,
+          @market_id,
+          @market_slug,
+          @model_name,
+          @direction,
+          @model_confidence,
+          @market_price,
+          @edge,
+          @decision,
+          @reason
+        )
+      `);
+    } catch (error) {
+      this.insertTradeEvaluationStmt = null;
+      this.logger.warn('Trade evaluations table not available', {
+        error: this._serializeError(error),
+      });
+    }
   }
 
   _updateStatus(status) {
@@ -181,16 +215,33 @@ export class PaperTraderService extends ServiceBase {
           decision,
         });
 
-        if (!decision.shouldTrade) {
-          continue;
-        }
-
         const existingTrade = this.selectMarketTradeStmt.get(market.id);
-        if (existingTrade) {
+        let evaluationDecision = decision.shouldTrade ? 'TRADE' : 'SKIP';
+        let evaluationReason = this._getEvaluationReason(decision);
+
+        if (decision.shouldTrade && existingTrade) {
+          evaluationDecision = 'SKIP';
+          evaluationReason = 'already_traded';
           this.logger.info('Skipping trade, already traded market', {
             marketId: market.id,
             marketSlug: market.market_slug,
           });
+        }
+
+        this._recordTradeEvaluation({
+          timestamp: Date.now(),
+          market_id: market.id,
+          market_slug: market.market_slug,
+          model_name: decision.modelName,
+          direction: decision.direction,
+          model_confidence: decision.confidence,
+          market_price: decision.entryPrice,
+          edge: decision.edge,
+          decision: evaluationDecision,
+          reason: evaluationReason,
+        });
+
+        if (!decision.shouldTrade || evaluationDecision === 'SKIP') {
           continue;
         }
 
@@ -270,6 +321,50 @@ export class PaperTraderService extends ServiceBase {
         outcome: trade.market_outcome,
       });
     }
+  }
+
+  _recordTradeEvaluation(evaluation) {
+    if (!this.insertTradeEvaluationStmt) return;
+    try {
+      this.insertTradeEvaluationStmt.run(evaluation);
+    } catch (error) {
+      this.logger.warn('Failed to record trade evaluation', {
+        error: this._serializeError(error),
+      });
+    }
+  }
+
+  _getEvaluationReason(decision) {
+    const indicatorReason = decision?.indicators?.reason;
+    if (indicatorReason) {
+      const normalized = indicatorReason.toLowerCase();
+      if (normalized.includes('missing candles')) {
+        return 'missing_candles';
+      }
+      if (normalized.includes('invalid market prices')) {
+        return 'invalid_prices';
+      }
+      if (normalized.includes('no model recommended')) {
+        return 'no_signal';
+      }
+      return normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+
+    const minEdge = this.decisionEngine.getMinEdge?.();
+    if (Number.isFinite(decision?.edge) && Number.isFinite(minEdge) && decision.edge < minEdge) {
+      return 'low_edge';
+    }
+
+    if (!Number.isFinite(decision?.entryPrice) || decision.entryPrice <= 0 || decision.entryPrice >= 1) {
+      return 'invalid_price';
+    }
+
+    const odds = (1 / decision.entryPrice) - 1;
+    if (!Number.isFinite(odds) || odds <= 0) {
+      return 'invalid_odds';
+    }
+
+    return decision?.shouldTrade ? 'signal' : 'skip';
   }
 }
 

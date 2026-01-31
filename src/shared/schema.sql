@@ -197,6 +197,23 @@ CREATE INDEX IF NOT EXISTS idx_paper_trades_model ON paper_trades(model_name);
 CREATE INDEX IF NOT EXISTS idx_paper_trades_outcome ON paper_trades(outcome);
 
 -- ============================================================
+-- Trade evaluations (paper trader decisions)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS trade_evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp INTEGER NOT NULL,
+  market_id INTEGER,
+  market_slug TEXT,
+  model_name TEXT,
+  direction TEXT,
+  model_confidence REAL,
+  market_price REAL,
+  edge REAL,
+  decision TEXT,  -- 'TRADE' or 'SKIP'
+  reason TEXT
+);
+
+-- ============================================================
 -- Collector status (for monitoring)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS collector_status (

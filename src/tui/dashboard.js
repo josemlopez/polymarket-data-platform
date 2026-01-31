@@ -7,6 +7,8 @@ import { getCollectorData } from "./views/collectors.js";
 import { getRecentTrades } from "./views/trades.js";
 import { getMarketStats } from "./views/markets.js";
 import { getServiceHealth } from "./views/services.js";
+import { getEvaluationStats } from "./views/evaluations.js";
+import { LogsView, getCollectorLogs } from "./views/logs-view.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,29 +31,51 @@ const safeTableRows = (rows, columns) => {
   return rows;
 };
 
-const getActivityLog = (db, limit = 100) => {
+const EDGE_THRESHOLD = 0.05;
+const EDGE_MIN = -0.2;
+const EDGE_MAX = 0.2;
+
+const getEdgeSeries = (db, limit = 50) => {
   try {
     if (!db) {
-      return [];
+      return { x: [], above: [], below: [], hasData: false };
     }
     const rows = db
       .prepare(
-        `SELECT timestamp, level, collector_name, message
-         FROM collector_logs
+        `SELECT timestamp, edge
+         FROM trade_evaluations
          ORDER BY timestamp DESC
          LIMIT ?`,
       )
       .all(limit);
 
-    return rows.map((row) => {
-      const time = formatTimestamp(row.timestamp);
-      const level = row.level ?? "INFO";
-      const collector = row.collector_name ?? "system";
-      const message = row.message ?? "";
-      return `[${time}] ${level} ${collector} - ${message}`;
+    if (rows.length === 0) {
+      return { x: [], above: [], below: [], hasData: false };
+    }
+
+    const ordered = rows.slice().reverse();
+    const x = [];
+    const above = [];
+    const below = [];
+
+    ordered.forEach((row) => {
+      x.push(formatTimestamp(row.timestamp));
+      const edge = Number(row.edge);
+      if (!Number.isFinite(edge)) {
+        above.push(null);
+        below.push(null);
+      } else if (edge >= EDGE_THRESHOLD) {
+        above.push(edge);
+        below.push(null);
+      } else {
+        above.push(null);
+        below.push(edge);
+      }
     });
+
+    return { x, above, below, hasData: true };
   } catch (error) {
-    return [];
+    return { x: [], above: [], below: [], hasData: false };
   }
 };
 
@@ -152,31 +176,36 @@ export class Dashboard {
       },
     });
 
-    // Scrollable log box
-    this.activityLog = this.grid.set(6, 6, 6, 6, blessed.box, {
-      label: " Log / Activity [↑↓ PgUp/PgDn to scroll] ",
-      scrollable: true,
-      alwaysScroll: true,
-      scrollbar: {
-        ch: "█",
-        track: { bg: "gray" },
-        style: { bg: "cyan" },
-      },
-      keys: true,
-      vi: true,
-      mouse: true,
+    // Evaluation stats box
+    this.evaluationStatsBox = this.grid.set(6, 6, 2, 6, blessed.box, {
+      label: " Trade Evaluations (last hour) ",
       style: {
         fg: "white",
         border: { fg: "white" },
       },
+      tags: false,
+    });
+
+    // Scrollable log box
+    this.edgeChart = this.grid.set(8, 6, 4, 6, contrib.line, {
+      label: " Edge Over Time [l: logs] ",
+      minY: EDGE_MIN,
+      maxY: EDGE_MAX,
+      showLegend: true,
+      style: {
+        text: "white",
+        baseline: "black",
+      },
     });
 
     // Keyboard navigation
-    this.screen.key(["q", "C-c"], () => this.stop());
+    this.quitHandler = () => this.stop();
+    this.screen.key(["q", "C-c"], this.quitHandler);
     this.screen.key(["tab"], () => this.cycleFocus());
     this.screen.key(["1"], () => this.focusCollectors());
     this.screen.key(["2"], () => this.focusTrades());
-    this.screen.key(["3"], () => this.focusLog());
+    this.screen.key(["3"], () => this.focusChart());
+    this.screen.key(["l"], () => this.showLogsView());
 
     // Collectors table events
     this.collectorsTable.rows.on("select", (item, index) => {
@@ -192,10 +221,15 @@ export class Dashboard {
     this.focusElements = [
       this.collectorsTable,
       this.tradesTable,
-      this.activityLog,
+      this.edgeChart,
     ];
 
     this.db = null;
+    this.logsView = new LogsView({
+      screen: this.screen,
+      onExit: () => this.hideLogsView(),
+    });
+    this.logsViewVisible = false;
   }
 
   cycleFocus() {
@@ -216,9 +250,49 @@ export class Dashboard {
     this.screen.render();
   }
 
-  focusLog() {
+  focusChart() {
     this.focusIndex = 2;
-    this.activityLog.focus();
+    this.edgeChart.focus();
+    this.screen.render();
+  }
+
+  setDashboardVisible(visible) {
+    const widgets = [
+      this.collectorsTable,
+      this.tradesTable,
+      this.marketStatsTable,
+      this.evaluationStatsBox,
+      this.edgeChart,
+    ];
+    widgets.forEach((widget) => {
+      if (visible) {
+        widget.show();
+      } else {
+        widget.hide();
+      }
+    });
+  }
+
+  showLogsView() {
+    if (this.logsViewVisible) {
+      return;
+    }
+    this.logsViewVisible = true;
+    this.setDashboardVisible(false);
+    this.screen.unkey(["q"], this.quitHandler);
+    this.logsView.show();
+    this.screen.render();
+  }
+
+  hideLogsView() {
+    if (!this.logsViewVisible) {
+      return;
+    }
+    this.logsViewVisible = false;
+    this.logsView.hide();
+    this.setDashboardVisible(true);
+    this.screen.key(["q"], this.quitHandler);
+    this.collectorsTable.focus();
     this.screen.render();
   }
 
@@ -370,6 +444,7 @@ export class Dashboard {
 
     const marketStats = getMarketStats(this.db);
     const serviceHealth = getServiceHealth(this.db);
+    const evaluationStats = getEvaluationStats(this.db);
     const statsRows = [];
 
     if (marketStats) {
@@ -406,12 +481,58 @@ export class Dashboard {
       data: safeTableRows(statsRows, 2),
     });
 
-    const logs = getActivityLog(this.db, 100);
-    if (logs.length === 0) {
-      this.activityLog.setContent("No data");
+    if (evaluationStats) {
+      const reasons = evaluationStats.skipReasons
+        .map((entry) => `${entry.reason}: ${entry.count}`)
+        .join(", ");
+      const reasonText = reasons ? ` (${reasons})` : "";
+      const summary = `Evaluated: ${evaluationStats.totalEvaluated} | Traded: ${evaluationStats.totalTraded} | Skipped: ${evaluationStats.totalSkipped}${reasonText}`;
+      const lastTime = evaluationStats.lastEvaluationTime
+        ? formatTimestamp(evaluationStats.lastEvaluationTime)
+        : "—";
+      this.evaluationStatsBox.setContent(`${summary}\nLast eval: ${lastTime}`);
     } else {
-      this.activityLog.setContent(logs.join("\n"));
+      this.evaluationStatsBox.setContent("No data");
     }
+
+    const edgeSeries = getEdgeSeries(this.db, 50);
+    if (!edgeSeries.hasData) {
+      this.edgeChart.setLabel(" Edge Over Time (No evaluations yet) ");
+      this.edgeChart.setData([
+        {
+          title: "No evaluations yet",
+          x: [""],
+          y: [0],
+          style: { line: "gray" },
+        },
+      ]);
+    } else {
+      this.edgeChart.setLabel(" Edge Over Time [l: logs] ");
+      const thresholdLine = edgeSeries.x.map(() => EDGE_THRESHOLD);
+      this.edgeChart.setData([
+        {
+          title: `>= ${EDGE_THRESHOLD}`,
+          x: edgeSeries.x,
+          y: edgeSeries.above,
+          style: { line: "green" },
+        },
+        {
+          title: `< ${EDGE_THRESHOLD}`,
+          x: edgeSeries.x,
+          y: edgeSeries.below,
+          style: { line: "red" },
+        },
+        {
+          title: "Threshold",
+          x: edgeSeries.x,
+          y: thresholdLine,
+          style: { line: "yellow" },
+        },
+      ]);
+    }
+
+    const logs = getCollectorLogs(this.db, 400);
+    this.logsView.setLogs(logs);
 
     this.screen.render();
   }

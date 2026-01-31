@@ -53,6 +53,10 @@ export class DecisionEngine {
     };
   }
 
+  getMinEdge() {
+    return this.config.minEdge;
+  }
+
   _calculateStake(edge, entryPrice) {
     if (!Number.isFinite(edge) || edge < this.config.minEdge) {
       return { stake: 0, shouldTrade: false };
