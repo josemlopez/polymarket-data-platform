@@ -1,9 +1,9 @@
-import { ServiceBase } from '../shared/service-base.js';
-import { RateLimiter } from '../shared/rate-limiter.js';
-import { Database } from '../shared/db.js';
-import { Logger } from '../shared/logger.js';
-import { DATABASE_PATH, LOG_LEVEL } from '../shared/config.js';
-import { MARKETS_CONFIG } from '../shared/markets-config.js';
+import { ServiceBase } from "../shared/service-base.js";
+import { RateLimiter } from "../shared/rate-limiter.js";
+import { Database } from "../shared/db.js";
+import { Logger } from "../shared/logger.js";
+import { DATABASE_PATH, LOG_LEVEL } from "../shared/config.js";
+import { MARKETS_CONFIG } from "../shared/markets-config.js";
 
 const POLL_INTERVAL_MS = 60_000;
 const RATE_LIMIT_PER_MIN = 100;
@@ -29,7 +29,7 @@ function parseOutcomePrices(outcomePrices) {
   if (Array.isArray(outcomePrices)) {
     return outcomePrices.map((value) => Number(value));
   }
-  if (typeof outcomePrices === 'string') {
+  if (typeof outcomePrices === "string") {
     try {
       const parsed = JSON.parse(outcomePrices);
       if (Array.isArray(parsed)) {
@@ -44,8 +44,8 @@ function parseOutcomePrices(outcomePrices) {
 
 export class PolymarketCollector extends ServiceBase {
   constructor() {
-    const logger = new Logger({ name: 'polymarket', level: LOG_LEVEL });
-    super({ name: 'polymarket', logger });
+    const logger = new Logger({ name: "polymarket", level: LOG_LEVEL });
+    super({ name: "polymarket", logger });
     this.logger = logger;
     this.db = new Database({ databasePath: DATABASE_PATH });
     this.rateLimiter = new RateLimiter({
@@ -64,7 +64,7 @@ export class PolymarketCollector extends ServiceBase {
     await this.db.initialize();
     this.logger.db = this.db;
     this._prepareStatements();
-    this._updateStatus('running');
+    this._updateStatus("running");
 
     await this._poll();
     this.intervalId = setInterval(() => {
@@ -78,7 +78,7 @@ export class PolymarketCollector extends ServiceBase {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
-    this._updateStatus('stopped');
+    this._updateStatus("stopped");
     if (this.db) {
       this.db.close();
     }
@@ -160,7 +160,7 @@ export class PolymarketCollector extends ServiceBase {
     try {
       this.db.updateCollectorStatus(this.name, status);
     } catch (error) {
-      this.logger.warn('Failed to update collector status', {
+      this.logger.warn("Failed to update collector status", {
         error: this._serializeError(error),
       });
     }
@@ -181,7 +181,7 @@ export class PolymarketCollector extends ServiceBase {
         try {
           response = await fetch(url);
         } catch (error) {
-          this.logger.warn('Network error fetching Polymarket events', {
+          this.logger.warn("Network error fetching Polymarket events", {
             seriesId,
             error: this._serializeError(error),
           });
@@ -189,7 +189,7 @@ export class PolymarketCollector extends ServiceBase {
         }
 
         if (!response.ok) {
-          this.logger.warn('Polymarket API error', {
+          this.logger.warn("Polymarket API error", {
             seriesId,
             status: response.status,
           });
@@ -200,14 +200,22 @@ export class PolymarketCollector extends ServiceBase {
         try {
           payload = await response.json();
         } catch (error) {
-          this.logger.warn('Failed to parse Polymarket response', {
+          this.logger.warn("Failed to parse Polymarket response", {
             seriesId,
             error: this._serializeError(error),
           });
           continue;
         }
 
-        const events = Array.isArray(payload?.data) ? payload.data : [];
+        // API returns array directly, not { data: [...] }
+        const events = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.data)
+            ? payload.data
+            : [];
+        this.logger.info(
+          `Found ${events.length} events for series ${seriesId}`,
+        );
         for (const event of events) {
           if (this.stopping) break;
           try {
@@ -215,18 +223,27 @@ export class PolymarketCollector extends ServiceBase {
             if (!seriesMeta) continue;
 
             const slug = event?.slug;
-            const startTime = Date.parse(event?.startDate ?? '');
-            const endTime = Date.parse(event?.endDate ?? '');
-            if (!slug || !Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+            const startTime = Date.parse(event?.startDate ?? "");
+            const endTime = Date.parse(event?.endDate ?? "");
+            if (
+              !slug ||
+              !Number.isFinite(startTime) ||
+              !Number.isFinite(endTime)
+            ) {
               continue;
             }
 
-            const marketDetails = Array.isArray(event?.markets) ? event.markets[0] : null;
+            const marketDetails = Array.isArray(event?.markets)
+              ? event.markets[0]
+              : null;
             const prices = parseOutcomePrices(marketDetails?.outcomePrices);
             const upPrice = prices?.[0];
             const downPrice = prices?.[1];
             const volumeRaw = marketDetails?.volume ?? event?.volume;
-            const volume = volumeRaw !== undefined && volumeRaw !== null ? Number(volumeRaw) : null;
+            const volume =
+              volumeRaw !== undefined && volumeRaw !== null
+                ? Number(volumeRaw)
+                : null;
 
             const existing = this.selectMarketBySlug.get(slug);
             if (!existing) {
@@ -239,7 +256,9 @@ export class PolymarketCollector extends ServiceBase {
                 start_time: startTime,
                 end_time: endTime,
                 initial_up_price: Number.isFinite(upPrice) ? upPrice : null,
-                initial_down_price: Number.isFinite(downPrice) ? downPrice : null,
+                initial_down_price: Number.isFinite(downPrice)
+                  ? downPrice
+                  : null,
                 initial_asset_price: null,
                 outcome: null,
                 final_up_price: null,
@@ -253,11 +272,18 @@ export class PolymarketCollector extends ServiceBase {
             }
 
             const marketRow = existing ?? this.selectMarketBySlug.get(slug);
-            if (!marketRow || !Number.isFinite(upPrice) || !Number.isFinite(downPrice)) {
+            if (
+              !marketRow ||
+              !Number.isFinite(upPrice) ||
+              !Number.isFinite(downPrice)
+            ) {
               continue;
             }
 
-            const timeRemainingSeconds = Math.max(0, Math.floor((endTime - now) / 1000));
+            const timeRemainingSeconds = Math.max(
+              0,
+              Math.floor((endTime - now) / 1000),
+            );
             this.insertSnapshotStmt.run({
               market_id: marketRow.id,
               timestamp: now,
@@ -269,7 +295,7 @@ export class PolymarketCollector extends ServiceBase {
               time_remaining_seconds: timeRemainingSeconds,
             });
           } catch (error) {
-            this.logger.warn('Failed to process Polymarket event', {
+            this.logger.warn("Failed to process Polymarket event", {
               seriesId,
               error: this._serializeError(error),
             });
@@ -277,9 +303,9 @@ export class PolymarketCollector extends ServiceBase {
         }
       }
 
-      this._updateStatus('running');
+      this._updateStatus("running");
     } catch (error) {
-      this.logger.error('Polymarket poll failed', {
+      this.logger.error("Polymarket poll failed", {
         error: this._serializeError(error),
       });
     } finally {
@@ -290,7 +316,7 @@ export class PolymarketCollector extends ServiceBase {
 
 const service = new PolymarketCollector();
 service.start().catch((error) => {
-  service.logger.error('Polymarket collector exited with error', {
+  service.logger.error("Polymarket collector exited with error", {
     error: service._serializeError(error),
   });
   process.exit(1);
