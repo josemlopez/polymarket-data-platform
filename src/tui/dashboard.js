@@ -367,26 +367,45 @@ export class Dashboard {
 
     if (this.detailPopup) {
       this.detailPopup.destroy();
+      this.detailPopup = null;
     }
 
     let content = `{bold}Trade Details{/bold}\n\n`;
-    content += `Time: ${trade.time}\n`;
-    content += `Model: ${trade.model}\n`;
-    content += `Direction: ${trade.direction}\n`;
-    content += `Entry Price: ${trade.entry}\n`;
-    content += `Outcome: ${trade.outcome}\n`;
-    content += `PnL: ${trade.pnl}\n`;
+    content += `{bold}Market:{/bold}\n`;
+    content += `  Asset: ${trade.assetName} (${trade.category})\n`;
+    content += `  Timeframe: ${trade.timeframe}\n`;
+    content += `  Slug: ${trade.marketSlug}\n`;
+    if (trade.marketUrl) {
+      content += `  URL: ${trade.marketUrl}\n`;
+    }
+    content += `  Start: ${trade.startTime} | End: ${trade.endTime}\n`;
+    content += `\n{bold}Trade:{/bold}\n`;
+    content += `  Time: ${trade.time}\n`;
+    content += `  Model: ${trade.model}\n`;
+    content += `  Direction: ${trade.direction}\n`;
+    content += `  Entry Price: ${trade.entry}\n`;
+    content += `  Stake: $${trade.stake}\n`;
+    content += `\n{bold}Model Analysis:{/bold}\n`;
+    content += `  Confidence: ${trade.confidence}%\n`;
+    content += `  Edge: ${trade.edge}%\n`;
+    content += `\n{bold}Result:{/bold}\n`;
+    content += `  Outcome: ${trade.outcome}\n`;
+    content += `  PnL: $${trade.pnl}\n`;
 
     this.detailPopup = blessed.box({
       parent: this.screen,
       top: "center",
       left: "center",
-      width: "50%",
-      height: "40%",
-      label: " Trade Details [Esc to close] ",
+      width: "70%",
+      height: "70%",
+      label: " Trade Details [Esc/q to close] ",
       content: content,
       tags: true,
       border: { type: "line" },
+      scrollable: true,
+      keys: true,
+      vi: true,
+      mouse: true,
       style: {
         fg: "white",
         bg: "black",
@@ -394,12 +413,15 @@ export class Dashboard {
       },
     });
 
-    this.detailPopup.key(["escape", "q"], () => {
-      this.detailPopup.destroy();
-      this.detailPopup = null;
-      this.screen.render();
-    });
+    const closePopup = () => {
+      if (this.detailPopup) {
+        this.detailPopup.destroy();
+        this.detailPopup = null;
+        this.screen.render();
+      }
+    };
 
+    this.detailPopup.key(["escape", "q"], closePopup);
     this.detailPopup.focus();
     this.screen.render();
   }
